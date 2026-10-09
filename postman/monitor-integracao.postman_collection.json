@@ -1,0 +1,1062 @@
+{
+  "info": {
+    "name": "Monitor de Integração MES → ERP",
+    "description": "Testes de API executados no CI com Newman. Rodar as pastas na ordem: cada fluxo encadeia ids via variáveis da coleção.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Validações aplicadas a TODAS as requisições",
+          "pm.test('[geral] responde em menos de 1s', () => pm.expect(pm.response.responseTime).to.be.below(1000));",
+          "pm.test('[geral] resposta em JSON', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'));"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "ordem",
+      "value": ""
+    },
+    {
+      "key": "vin",
+      "value": ""
+    },
+    {
+      "key": "id",
+      "value": ""
+    },
+    {
+      "key": "idErro",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Saúde e autenticação",
+      "description": "Disponibilidade da API e proteção por chave.",
+      "item": [
+        {
+          "name": "Saúde da API",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/saude",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "saude"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar sem chave de API → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 401', () => pm.response.to.have.status(401));",
+                  "pm.test('mensagem de erro', () => pm.expect(pm.response.json().erro).to.match(/Chave de API/));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Fluxo feliz",
+      "description": "Apontamento válido do MES até a integração no ERP.",
+      "item": [
+        {
+          "name": "Criar apontamento",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ordem\": \"{{ordem}}\",\n  \"vin\": \"{{vin}}\",\n  \"modelo\": \"SUV-M\",\n  \"quantidade\": 1,\n  \"custo\": 85230.5,\n  \"situacao_veiculo\": \"PRODUZIDO\",\n  \"data_producao\": \"2026-03-10\",\n  \"hora_producao\": \"19:25\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Gera ordem e VIN únicos a cada execução (VIN sem I, O e Q)",
+                  "const seq = String(Date.now()).slice(-6);",
+                  "pm.collectionVariables.set('ordem', 'OP' + seq);",
+                  "pm.collectionVariables.set('vin', '9BWZZZ377VT' + seq);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const corpo = pm.response.json();",
+                  "pm.test('entra na fila como PENDENTE', () => {",
+                  "  pm.expect(corpo.status).to.eql('PENDENTE');",
+                  "  pm.expect(corpo.tentativas).to.eql(0);",
+                  "  pm.expect(corpo.motivo_erro).to.be.null;",
+                  "});",
+                  "pm.test('header Location aponta para o registro', () =>",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/api/integracoes/' + corpo.id));",
+                  "pm.test('schema da integração', () => pm.response.to.have.jsonSchema({",
+                  "  type: 'object',",
+                  "  required: ['id', 'ordem', 'vin', 'status', 'hora_producao'],",
+                  "  properties: {",
+                  "    id: { type: 'integer' },",
+                  "    vin: { type: 'string', pattern: '^[A-HJ-NPR-Z0-9]{17}$' },",
+                  "    hora_producao: { type: 'string', pattern: '^\\\\d{2}:\\\\d{2}$' },",
+                  "    status: { enum: ['PENDENTE', 'INTEGRADO', 'ERRO'] }",
+                  "  }",
+                  "}));",
+                  "pm.collectionVariables.set('id', corpo.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enviar o mesmo apontamento de novo → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ordem\": \"{{ordem}}\",\n  \"vin\": \"{{vin}}\",\n  \"modelo\": \"SUV-M\",\n  \"quantidade\": 1,\n  \"custo\": 85230.5,\n  \"situacao_veiculo\": \"PRODUZIDO\",\n  \"data_producao\": \"2026-03-10\",\n  \"hora_producao\": \"19:25\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409 (idempotência por ordem + VIN)', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Processar fila (ERP)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/processar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "processar"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('processou ao menos o registro criado', () => pm.expect(r.integrados).to.be.at.least(1));",
+                  "pm.test('totais consistentes', () => pm.expect(r.integrados + r.erros).to.eql(r.processados));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar registro integrado",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/{{id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "{{id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('ficou INTEGRADO', () => pm.expect(r.status).to.eql('INTEGRADO'));",
+                  "pm.test('registrou data de processamento', () => pm.expect(r.processado_em).to.match(/^\\d{4}-\\d{2}-\\d{2}T/));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Erro, correção e reprocessamento",
+      "description": "Registro com custo zerado cai em erro, é corrigido e reprocessado.",
+      "item": [
+        {
+          "name": "Criar apontamento com custo zerado",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ordem\": \"{{ordem}}\",\n  \"vin\": \"{{vin}}\",\n  \"modelo\": \"SUV-M\",\n  \"quantidade\": 1,\n  \"custo\": 0,\n  \"situacao_veiculo\": \"PRODUZIDO\",\n  \"data_producao\": \"2026-03-10\",\n  \"hora_producao\": \"19:25\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Gera ordem e VIN únicos a cada execução (VIN sem I, O e Q)",
+                  "const seq = String(Date.now()).slice(-6);",
+                  "pm.collectionVariables.set('ordem', 'OP' + seq);",
+                  "pm.collectionVariables.set('vin', '9BWZZZ377VT' + seq);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('idErro', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Processar fila (ERP)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/processar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "processar"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('gerou erro', () => pm.expect(pm.response.json().erros).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar registro com erro",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/{{idErro}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "{{idErro}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test('ficou com ERRO', () => pm.expect(r.status).to.eql('ERRO'));",
+                  "pm.test('motivo: custo zerado', () => pm.expect(r.motivo_erro).to.eql('Custo zerado'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reprocessar registro já integrado → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/{{id}}/reprocessar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "{{id}}",
+                "reprocessar"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409: registro integrado não pode ser reprocessado', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Corrigir custo",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/{{idErro}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "{{idErro}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"custo\": 79000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('custo atualizado', () => pm.expect(pm.response.json().custo).to.eql(79000));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reprocessar",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/{{idErro}}/reprocessar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "{{idErro}}",
+                "reprocessar"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('voltou para PENDENTE e limpou o motivo', () => {",
+                  "  pm.expect(r.status).to.eql('PENDENTE');",
+                  "  pm.expect(r.motivo_erro).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Processar fila (ERP)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/processar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "processar"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar registro corrigido",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/{{idErro}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "{{idErro}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test('agora está INTEGRADO', () => pm.expect(r.status).to.eql('INTEGRADO'));",
+                  "pm.test('contou duas tentativas', () => pm.expect(r.tentativas).to.eql(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Corrigir registro já integrado → 409",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/{{idErro}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "{{idErro}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"custo\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - Validações",
+      "description": "Entradas inválidas e casos de borda.",
+      "item": [
+        {
+          "name": "Corpo vazio → 400 com todos os erros",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('lista os 7 campos com problema', () => pm.expect(pm.response.json().erros).to.have.lengthOf(7));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "VIN com letra O → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ordem\": \"{{ordem}}\",\n  \"vin\": \"9BWZZZ377VT00425O\",\n  \"modelo\": \"SUV-M\",\n  \"quantidade\": 1,\n  \"custo\": 85230.5,\n  \"situacao_veiculo\": \"PRODUZIDO\",\n  \"data_producao\": \"2026-03-10\",\n  \"hora_producao\": \"19:25\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Gera ordem e VIN únicos a cada execução (VIN sem I, O e Q)",
+                  "const seq = String(Date.now()).slice(-6);",
+                  "pm.collectionVariables.set('ordem', 'OP' + seq);",
+                  "pm.collectionVariables.set('vin', '9BWZZZ377VT' + seq);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('aponta o VIN', () => pm.expect(pm.response.json().erros[0]).to.match(/vin/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[BUG-001] Hora no formato HHMM é normalizada",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ordem\": \"{{ordem}}\",\n  \"vin\": \"{{vin}}\",\n  \"modelo\": \"SUV-M\",\n  \"quantidade\": 1,\n  \"custo\": 85230.5,\n  \"situacao_veiculo\": \"PRODUZIDO\",\n  \"data_producao\": \"2026-03-10\",\n  \"hora_producao\": \"0705\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Gera ordem e VIN únicos a cada execução (VIN sem I, O e Q)",
+                  "const seq = String(Date.now()).slice(-6);",
+                  "pm.collectionVariables.set('ordem', 'OP' + seq);",
+                  "pm.collectionVariables.set('vin', '9BWZZZ377VT' + seq);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('0705 vira 07:05', () => pm.expect(pm.response.json().hora_producao).to.eql('07:05'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Hora inválida 24:00 → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ordem\": \"{{ordem}}\",\n  \"vin\": \"{{vin}}\",\n  \"modelo\": \"SUV-M\",\n  \"quantidade\": 1,\n  \"custo\": 85230.5,\n  \"situacao_veiculo\": \"PRODUZIDO\",\n  \"data_producao\": \"2026-03-10\",\n  \"hora_producao\": \"24:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Gera ordem e VIN únicos a cada execução (VIN sem I, O e Q)",
+                  "const seq = String(Date.now()).slice(-6);",
+                  "pm.collectionVariables.set('ordem', 'OP' + seq);",
+                  "pm.collectionVariables.set('vin', '9BWZZZ377VT' + seq);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filtro de status inválido → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes?status=CANCELADO",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "CANCELADO"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Limite acima de 100 → 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes?limite=101",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes"
+              ],
+              "query": [
+                {
+                  "key": "limite",
+                  "value": "101"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registro inexistente → 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/integracoes/999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "integracoes",
+                "999999"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 - Painel",
+      "description": "Indicadores consumidos pela tela de acompanhamento.",
+      "item": [
+        {
+          "name": "Painel",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/painel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "painel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const p = pm.response.json();",
+                  "pm.test('totais por status', () => pm.expect(p.totais).to.have.all.keys('PENDENTE', 'INTEGRADO', 'ERRO'));",
+                  "pm.test('última integração com hora HH:MM (BUG-001)', () =>",
+                  "  pm.expect(p.ultima_integracao.hora).to.match(/^([01]\\d|2[0-3]):[0-5]\\d$/));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
