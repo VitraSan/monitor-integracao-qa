@@ -1,0 +1,40 @@
+{
+  "name": "monitor-integracao",
+  "version": "1.0.0",
+  "description": "API de integração MES → ERP com documentação OpenAPI, testes de contrato e coleção Postman executada no CI com Newman.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "test": "node --no-warnings node_modules/jest/bin/jest.js",
+    "test:unit": "npm test -- tests/unit",
+    "test:api": "npm test -- tests/api",
+    "test:coverage": "npm test -- --coverage",
+    "test:postman": "newman run postman/monitor-integracao.postman_collection.json -e postman/local.postman_environment.json --reporters cli,junit --reporter-junit-export reports/newman.xml"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.1.0",
+    "js-yaml": "^4.1.0",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "jest": "^30.2.0",
+    "newman": "^6.2.1",
+    "supertest": "^7.1.4"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "<rootDir>/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/server.js"
+    ]
+  }
+}

@@ -1,0 +1,333 @@
+openapi: 3.1.0
+info:
+  title: Monitor de Integração MES → ERP
+  version: 1.0.0
+  description: |
+    API que recebe os apontamentos de produção enviados pelo MES, mantém uma fila de
+    integração e simula o processamento pelo ERP, com painel de acompanhamento.
+
+    Os endpoints em `/api/integracoes` exigem o cabeçalho `x-api-key`
+    (valor padrão em desenvolvimento: `chave-dev`).
+servers:
+  - url: http://localhost:3000
+tags:
+  - name: Integrações
+  - name: Painel
+  - name: Saúde
+
+paths:
+  /api/saude:
+    get:
+      tags: [Saúde]
+      summary: Verifica se a API está no ar
+      responses:
+        '200':
+          description: API disponível
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status: { type: string, const: ok }
+
+  /api/integracoes:
+    post:
+      tags: [Integrações]
+      summary: Recebe um apontamento de produção do MES
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NovoApontamento' }
+            example:
+              ordem: OP000123
+              vin: 9BWZZZ377VT004251
+              modelo: SUV-M
+              quantidade: 1
+              custo: 85230.5
+              situacao_veiculo: PRODUZIDO
+              data_producao: '2026-03-10'
+              hora_producao: '19:25'
+      responses:
+        '201':
+          description: Apontamento recebido e colocado na fila como PENDENTE
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Integracao' }
+        '400': { $ref: '#/components/responses/ErrosValidacao' }
+        '401': { $ref: '#/components/responses/NaoAutorizado' }
+        '409': { $ref: '#/components/responses/Conflito' }
+    get:
+      tags: [Integrações]
+      summary: Lista a fila de integração com filtros e paginação
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [PENDENTE, INTEGRADO, ERRO, pendente, integrado, erro] }
+        - name: modelo
+          in: query
+          schema: { type: string }
+        - name: pagina
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limite
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Página de resultados
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListaIntegracoes' }
+        '400': { $ref: '#/components/responses/ErrosValidacao' }
+        '401': { $ref: '#/components/responses/NaoAutorizado' }
+
+  /api/integracoes/processar:
+    post:
+      tags: [Integrações]
+      summary: Simula o ERP processando todos os registros pendentes
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Resumo do processamento
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultadoProcessamento' }
+        '401': { $ref: '#/components/responses/NaoAutorizado' }
+
+  /api/integracoes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Integrações]
+      summary: Detalhe de um registro da fila
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Registro encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Integracao' }
+        '401': { $ref: '#/components/responses/NaoAutorizado' }
+        '404': { $ref: '#/components/responses/NaoEncontrado' }
+    patch:
+      tags: [Integrações]
+      summary: Corrige custo e/ou situação do veículo de um registro não integrado
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Correcao' }
+      responses:
+        '200':
+          description: Registro corrigido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Integracao' }
+        '400': { $ref: '#/components/responses/ErroUnico' }
+        '401': { $ref: '#/components/responses/NaoAutorizado' }
+        '404': { $ref: '#/components/responses/NaoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflito' }
+
+  /api/integracoes/{id}/reprocessar:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Integrações]
+      summary: Devolve um registro com erro para a fila (PENDENTE)
+      security: [{ apiKey: [] }]
+      responses:
+        '200':
+          description: Registro voltou para PENDENTE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Integracao' }
+        '401': { $ref: '#/components/responses/NaoAutorizado' }
+        '404': { $ref: '#/components/responses/NaoEncontrado' }
+        '409': { $ref: '#/components/responses/Conflito' }
+
+  /api/painel:
+    get:
+      tags: [Painel]
+      summary: Indicadores da integração
+      responses:
+        '200':
+          description: Totais por status, erros por motivo e última integração
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Painel' }
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    ErrosValidacao:
+      description: Dados inválidos
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/ErrosValidacao'
+              - $ref: '#/components/schemas/ErroUnico'
+    ErroUnico:
+      description: Requisição inválida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErroUnico' }
+    NaoAutorizado:
+      description: Chave de API ausente ou inválida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErroUnico' }
+    NaoEncontrado:
+      description: Registro não encontrado
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErroUnico' }
+    Conflito:
+      description: Operação não permitida no estado atual do registro
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErroUnico' }
+
+  schemas:
+    Status:
+      type: string
+      enum: [PENDENTE, INTEGRADO, ERRO]
+
+    NovoApontamento:
+      type: object
+      required: [ordem, vin, modelo, quantidade, custo, data_producao, hora_producao]
+      properties:
+        ordem: { type: string, pattern: '^OP\d{6}$' }
+        vin: { type: string, pattern: '^[A-HJ-NPR-Z0-9]{17}$' }
+        modelo: { type: string, minLength: 1 }
+        quantidade: { type: integer, minimum: 1 }
+        custo: { type: number, minimum: 0 }
+        situacao_veiculo: { type: string }
+        data_producao: { type: string, format: date }
+        hora_producao:
+          type: string
+          pattern: '^\d{2}:?\d{2}$'
+          description: Aceita HH:MM ou HHMM; é sempre devolvida como HH:MM
+
+    Correcao:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        custo: { type: number, minimum: 0 }
+        situacao_veiculo: { type: string }
+
+    Integracao:
+      type: object
+      additionalProperties: false
+      required:
+        [id, ordem, vin, modelo, quantidade, custo, situacao_veiculo, data_producao, hora_producao,
+         status, motivo_erro, tentativas, recebido_em, processado_em]
+      properties:
+        id: { type: integer, minimum: 1 }
+        ordem: { type: string, pattern: '^OP\d{6}$' }
+        vin: { type: string, pattern: '^[A-HJ-NPR-Z0-9]{17}$' }
+        modelo: { type: string }
+        quantidade: { type: integer, minimum: 1 }
+        custo: { type: number, minimum: 0 }
+        situacao_veiculo: { type: string }
+        data_producao: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        hora_producao: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
+        status: { $ref: '#/components/schemas/Status' }
+        motivo_erro: { type: [string, 'null'] }
+        tentativas: { type: integer, minimum: 0 }
+        recebido_em: { type: string, pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$' }
+        processado_em: { type: [string, 'null'] }
+
+    ListaIntegracoes:
+      type: object
+      additionalProperties: false
+      required: [dados, pagina, limite, total]
+      properties:
+        dados:
+          type: array
+          items: { $ref: '#/components/schemas/Integracao' }
+        pagina: { type: integer, minimum: 1 }
+        limite: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+
+    ResultadoProcessamento:
+      type: object
+      additionalProperties: false
+      required: [processados, integrados, erros]
+      properties:
+        processados: { type: integer, minimum: 0 }
+        integrados: { type: integer, minimum: 0 }
+        erros: { type: integer, minimum: 0 }
+
+    Painel:
+      type: object
+      additionalProperties: false
+      required: [totais, erros_por_motivo, ultima_integracao]
+      properties:
+        totais:
+          type: object
+          additionalProperties: false
+          required: [PENDENTE, INTEGRADO, ERRO]
+          properties:
+            PENDENTE: { type: integer, minimum: 0 }
+            INTEGRADO: { type: integer, minimum: 0 }
+            ERRO: { type: integer, minimum: 0 }
+        erros_por_motivo:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [motivo, quantidade]
+            properties:
+              motivo: { type: string }
+              quantidade: { type: integer, minimum: 1 }
+        ultima_integracao:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [vin, modelo, data, hora]
+              properties:
+                vin: { type: string }
+                modelo: { type: string }
+                data: { type: string }
+                hora: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
+
+    ErroUnico:
+      type: object
+      additionalProperties: false
+      required: [erro]
+      properties:
+        erro: { type: string }
+
+    ErrosValidacao:
+      type: object
+      additionalProperties: false
+      required: [erros]
+      properties:
+        erros:
+          type: array
+          minItems: 1
+          items: { type: string }
